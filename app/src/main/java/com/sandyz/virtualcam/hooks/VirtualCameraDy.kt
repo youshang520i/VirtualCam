@@ -11,6 +11,7 @@ import android.hardware.camera2.params.SessionConfiguration
 import android.os.Build
 import android.os.Handler
 import android.view.Surface
+import com.sandyz.virtualcam.utils.HookUtils
 import com.sandyz.virtualcam.utils.PlayIjk
 import com.sandyz.virtualcam.utils.xLog
 import de.robv.android.xposed.XC_MethodHook
@@ -18,6 +19,7 @@ import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 import tv.danmaku.ijk.media.player.IjkMediaPlayer
+import java.io.File
 
 /**
  *@author sandyz987
@@ -71,6 +73,20 @@ class VirtualCameraDy : IHook {
         nullSurface = Surface(nullSurfaceTex)
     }
 
+    /**
+     * 判断目标 App 的 cache 目录下是否存在视频源（virtual.mp4 或非空的 stream.txt）。
+     * 若没有视频源，则 hook 应放行，让真实摄像头正常工作。
+     */
+    private fun hasVideoSource(): Boolean {
+        val cacheDir = HookUtils.app?.externalCacheDir ?: return false
+        val streamFile = File(cacheDir, "stream.txt")
+        if (streamFile.exists() && streamFile.length() > 0) {
+            return true
+        }
+        val mp4File = File(cacheDir, "virtual.mp4")
+        return mp4File.exists() && mp4File.length() > 0
+    }
+
 
     override fun hook(lpparam: LoadPackageParam?) {
         XposedHelpers.findAndHookMethod(
@@ -88,6 +104,10 @@ class VirtualCameraDy : IHook {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             XposedHelpers.findAndHookMethod("android.hardware.camera2.impl.CameraDeviceImpl", lpparam.classLoader, "createCaptureSession", SessionConfiguration::class.java, object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!hasVideoSource()) {
+                        xLog("无视频源，放行 createCaptureSession（真实摄像头）")
+                        return
+                    }
                     resetSurface()
 
                     xLog("应用程序创建相机管道?createCaptureSession   ")
@@ -147,6 +167,10 @@ class VirtualCameraDy : IHook {
 
         XposedHelpers.findAndHookMethod("android.hardware.camera2.CaptureRequest.Builder", lpparam.classLoader, "addTarget", Surface::class.java, object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam?) {
+                if (!hasVideoSource()) {
+                    xLog("无视频源，放行 addTarget（真实摄像头）")
+                    return
+                }
                 xLog("应用程序向相机添加输出目标addTarget          surface: ${param?.args?.get(0)}")
                 xLog("找到屏幕上的surface          surface: ${param?.args?.get(0)}")
                 if (virtualSurface == null) { // 如果还不知道屏幕上的surface是哪个的话，说明还没有hook到相机
